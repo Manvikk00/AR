@@ -3,27 +3,129 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Camera Access</title>
+    <title>AI Virtual Keyboard</title>
+    
+    <!-- Load TensorFlow.js and HandPose Model -->
+    <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/handpose"></script>
+
+    <style>
+        body { text-align: center; font-family: Arial, sans-serif; background-color: #121212; color: white; }
+        canvas { border: 2px solid white; position: absolute; top: 50px; left: 50%; transform: translateX(-50%); }
+        #output { font-size: 24px; margin-top: 20px; }
+        video { display: none; } /* Hide video feed, we only use canvas */
+    </style>
 </head>
 <body>
+    <h1>AI Virtual Keyboard</h1>
+    <video id="video" width="640" height="480" autoplay></video>
+    <canvas id="canvas" width="640" height="480"></canvas>
+    <div id="output">Typed Text: <span id="typedText"></span></div>
 
-    <h2>Live Camera Feed</h2>
-    <video id="camera" autoplay playsinline></video>
     <script>
-        // Get access to the camera
-        async function startCamera() {
-            try {
-                const stream = await navigator.mediaDevices.getUserMedia({ video: true });
-                const videoElement = document.getElementById('camera');
-                videoElement.srcObject = stream;
-            } catch (error) {
-                console.error("Error accessing the camera: ", error);
-            }
+        const video = document.getElementById("video");
+        const canvas = document.getElementById("canvas");
+        const ctx = canvas.getContext("2d");
+        const outputText = document.getElementById("typedText");
+
+        let model;
+        let typedText = "";
+
+        // Keyboard Layout (Position Mapping)
+        const keyboardGrid = [
+            ["Q", "W", "E", "R", "T", "Y", "U", "I", "O", "P"],
+            ["A", "S", "D", "F", "G", "H", "J", "K", "L"],
+            ["Z", "X", "C", "V", "B", "N", "M", "SPACE"]
+        ];
+
+        const keyPositions = [];
+        const startX = 100, startY = 300, keySize = 50;
+
+        // Generate Key Position Mappings
+        keyboardGrid.forEach((row, rowIndex) => {
+            row.forEach((key, colIndex) => {
+                keyPositions.push({
+                    key: key,
+                    x: startX + colIndex * keySize,
+                    y: startY + rowIndex * keySize,
+                    width: keySize,
+                    height: keySize
+                });
+            });
+        });
+
+        // Initialize Camera
+        async function setupCamera() {
+            const stream = await navigator.mediaDevices.getUserMedia({ video: true });
+            video.srcObject = stream;
+            return new Promise((resolve) => {
+                video.onloadedmetadata = () => resolve(video);
+            });
         }
 
-        // Start the camera when the page loads
-        window.onload = startCamera;
-    </script>
+        // Load HandPose Model
+        async function loadModel() {
+            model = await handpose.load();
+            console.log("HandPose model loaded!");
+        }
 
+        // Detect Hands & Fingertips
+        async function detectHands() {
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+
+            const predictions = await model.estimateHands(video);
+            if (predictions.length > 0) {
+                const keypoints = predictions[0].landmarks;
+                
+                // Draw Hand Landmarks
+                keypoints.forEach(point => {
+                    const [x, y] = point;
+                    ctx.beginPath();
+                    ctx.arc(x, y, 5, 0, 2 * Math.PI);
+                    ctx.fillStyle = "red";
+                    ctx.fill();
+                });
+
+                // Detect Index Finger Tip (Landmark ID 8)
+                const [indexX, indexY] = keypoints[8];
+
+                // Draw Index Finger Circle
+                ctx.beginPath();
+                ctx.arc(indexX, indexY, 10, 0, 2 * Math.PI);
+                ctx.fillStyle = "blue";
+                ctx.fill();
+
+                // Detect Taps & Key Presses
+                keyPositions.forEach(({ key, x, y, width, height }) => {
+                    ctx.strokeStyle = "white";
+                    ctx.strokeRect(x, y, width, height);
+                    ctx.fillStyle = "white";
+                    ctx.fillText(key, x + 10, y + 30);
+
+                    // Check if Finger is Inside a Key
+                    if (indexX > x && indexX < x + width && indexY > y && indexY < y + height) {
+                        if (key === "SPACE") {
+                            typedText += " ";
+                        } else {
+                            typedText += key;
+                        }
+                        outputText.innerText = typedText;
+                    }
+                });
+            }
+
+            requestAnimationFrame(detectHands);
+        }
+
+        // Start Everything
+        async function start() {
+            await setupCamera();
+            await loadModel();
+            detectHands();
+        }
+
+        start();
+    </script>
 </body>
 </html>
